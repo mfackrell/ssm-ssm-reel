@@ -8,7 +8,7 @@ app.use(express.json());
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
-    service: "ritra-orchestrator",
+    service: "ssm-orchestrator",
     timestamp: new Date().toISOString()
   });
 });
@@ -16,7 +16,7 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.json({
     status: "ok",
-    service: "ritra-orchestrator",
+    service: "ssm-orchestrator",
     timestamp: new Date().toISOString()
   });
 });
