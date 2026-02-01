@@ -5,7 +5,7 @@ steps:
       [
         'run',
         'deploy',
-        'ssm-mesa-reel',
+        'ssm-ssm-reel',
         '--source=.',
         '--region=us-central1',
         '--timeout=3600'
