@@ -76,7 +76,7 @@ function pickRandom(arr) {
 }
 
 // -------- PUBLIC API --------
-export async function selectSSMTopic() {
+export async function selectTopic() {
   console.log("Selecting topic using SSM education matrix...");
 
   const selection = {
