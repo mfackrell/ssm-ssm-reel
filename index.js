@@ -27,16 +27,36 @@ app.post("/run", async (req, res) => {
     timestamp: new Date().toISOString()
   });
 
-  runOrchestrator(req.body).catch(err => {
+  res.setHeader("Content-Type", "application/json");
+  res.setHeader("Transfer-Encoding", "chunked");
+
+  // immediate write keeps Cloud Run alive
+  res.write(JSON.stringify({ status: "started" }) + "\n");
+
+  // heartbeat prevents idle shutdown
+  const heartbeat = setInterval(() => {
+    try {
+      res.write(
+        JSON.stringify({ status: "working", ts: Date.now() }) + "\n"
+      );
+    } catch (_) {}
+  }, 8000);
+
+  try {
+    const result = await runOrchestrator(req.body);
+
+    clearInterval(heartbeat);
+    res.write(JSON.stringify({ status: "complete", result }) + "\n");
+    res.end();
+  } catch (err) {
+    clearInterval(heartbeat);
     console.error("Orchestrator error", err);
-  });
-
-  res.status(200).json({
-    status: "accepted",
-    message: "Run triggered"
-  });
+    res.write(
+      JSON.stringify({ status: "error", message: err.message }) + "\n"
+    );
+    res.end();
+  }
 });
-
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
