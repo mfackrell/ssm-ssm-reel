@@ -1,5 +1,3 @@
-// ssm-mesa-reel steps/generateBackgroundVideo.js
-
 import { Storage } from "@google-cloud/storage";
 
 const storage = new Storage();
@@ -70,7 +68,7 @@ async function startSVD(imageUrl) {
 }
 
 export async function generateBackgroundVideo(mood, existingJobId) {
-  // Case 1: Initial Trigger
+  // 1. INITIAL TRIGGER (No Job ID yet)
   if (!existingJobId) {
     const sdxl = await startOrPollSDXL(mood, null);
 
@@ -82,10 +80,11 @@ export async function generateBackgroundVideo(mood, existingJobId) {
       const rootId = await startSVD(sdxl.imageUrl);
       return { state: "SVD_LOOPING", jobId: `svd:${rootId}` };
     }
+
     throw new Error(`Unexpected SDXL response: ${JSON.stringify(sdxl)}`);
   }
 
-  // Case 2: Polling SDXL
+  // 2. POLLING SDXL IMAGE GENERATION
   if (existingJobId.startsWith("sdxl:")) {
     const sdxlJobId = existingJobId.slice("sdxl:".length);
     const sdxl = await startOrPollSDXL(mood, sdxlJobId);
@@ -98,26 +97,32 @@ export async function generateBackgroundVideo(mood, existingJobId) {
       const rootId = await startSVD(sdxl.imageUrl);
       return { state: "SVD_LOOPING", jobId: `svd:${rootId}` };
     }
+
     throw new Error(`Unexpected SDXL poll response: ${JSON.stringify(sdxl)}`);
   }
 
-  // Case 3: Polling SVD (The actual video generation)
+  // 3. POLLING SVD VIDEO GENERATION
   if (existingJobId.startsWith("svd:")) {
     const rootId = existingJobId.slice("svd:".length);
 
     try {
       const job = await readSvdJob(rootId);
 
-      // FAILURE CHECK (Added to prevent infinite looping)
+      // FAILURE CHECK: Stop the orchestrator if RunPod fails
       if (job?.status === "FAILED") {
         throw new Error(`SVD Generation Failed: ${job.error || "Unknown RunPod Error"}`);
       }
 
+      // FINALIZING CHECK: Still looping/stitching
       if (job?.status === "FINALIZING") {
         return { state: "SVD_LOOPING", jobId: existingJobId };
       }
 
-      if (job?.status === "COMPLETE" && typeof job?.final_video_url === "string") {
+      // COMPLETION CHECK
+      if (
+        job?.status === "COMPLETE" &&
+        typeof job?.final_video_url === "string"
+      ) {
         return {
           state: "COMPLETE",
           jobId: existingJobId,
@@ -125,7 +130,7 @@ export async function generateBackgroundVideo(mood, existingJobId) {
         };
       }
 
-      // Default back to looping
+      // If none of the above, we are still looping
       return { state: "SVD_LOOPING", jobId: existingJobId };
     } catch (err) {
       throw new Error(`Failed reading SVD job state for ${rootId}: ${err?.message || err}`);
