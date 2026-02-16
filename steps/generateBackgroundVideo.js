@@ -15,18 +15,11 @@ async function readSvdJob(rootId) {
 }
 
 async function startOrPollSDXL(mood, jobId) {
-const prompt = `
-  high-resolution image of
-  ${mood}
-  `;
+  const prompt = `high-resolution image of ${mood}`;
 
-  // ✅ ADD THIS LOG — DO NOT CHANGE ANYTHING ELSE
   console.log("[SDXL REQUEST]", JSON.stringify({
     url: SDXL_URL,
-    payload: {
-      prompt,
-      jobId
-    }
+    payload: { prompt, jobId }
   }, null, 2));
 
   const res = await fetch(SDXL_URL, {
@@ -42,7 +35,6 @@ const prompt = `
 
   const json = await res.json();
   
-  // Normalize SDXL manager response to existing contract
   if (json?.status === "pending" && typeof json?.jobId === "string") {
     return { state: "PENDING", jobId: json.jobId };
   }
@@ -78,10 +70,7 @@ async function startSVD(imageUrl) {
 }
 
 export async function generateBackgroundVideo(mood, existingJobId) {
-  // We use a single string jobId with a prefix so the orchestrator can keep passing one value.
-  // sdxl:<runpodJobId>  -> polling SDXL manager
-  // svd:<rootId>        -> polling GCS job state written by SVD manager
-
+  // Case 1: Initial Trigger
   if (!existingJobId) {
     const sdxl = await startOrPollSDXL(mood, null);
 
@@ -93,59 +82,50 @@ export async function generateBackgroundVideo(mood, existingJobId) {
       const rootId = await startSVD(sdxl.imageUrl);
       return { state: "SVD_LOOPING", jobId: `svd:${rootId}` };
     }
-
     throw new Error(`Unexpected SDXL response: ${JSON.stringify(sdxl)}`);
   }
 
+  // Case 2: Polling SDXL
+  if (existingJobId.startsWith("sdxl:")) {
+    const sdxlJobId = existingJobId.slice("sdxl:".length);
+    const sdxl = await startOrPollSDXL(mood, sdxlJobId);
+
+    if (sdxl?.state === "PENDING" && typeof sdxl?.jobId === "string") {
+      return { state: "SDXL_PENDING", jobId: `sdxl:${sdxl.jobId}` };
+    }
+
+    if (sdxl?.state === "COMPLETE" && typeof sdxl?.imageUrl === "string") {
+      const rootId = await startSVD(sdxl.imageUrl);
+      return { state: "SVD_LOOPING", jobId: `svd:${rootId}` };
+    }
+    throw new Error(`Unexpected SDXL poll response: ${JSON.stringify(sdxl)}`);
+  }
+
+  // Case 3: Polling SVD (The actual video generation)
   if (existingJobId.startsWith("svd:")) {
-      const rootId = existingJobId.slice("svd:".length);
-  
-      try {
-        const job = await readSvdJob(rootId);
-  
-        // 1. Check for failure first to prevent the infinite loop
-        if (job?.status === "FAILED") {
-          throw new Error(`SVD Generation Failed: ${job.error || "Unknown RunPod Error"}`);
-        }
-  
-        // 2. Keep the finalizing check
-        if (job?.status === "FINALIZING") {
-          return { state: "SVD_LOOPING", jobId: existingJobId };
-        }
-  
-        // 3. Handle the successful completion
-        if (
-          job?.status === "COMPLETE" &&
-          typeof job?.final_video_url === "string"
-        ) {
-          return {
-            state: "COMPLETE",
-            jobId: existingJobId,
-            videoUrl: job.final_video_url
-          };
-        }
-  
-        // 4. Default back to looping if state is PENDING or LOOPING
-        return { state: "SVD_LOOPING", jobId: existingJobId };
-      } catch (err) {
-        throw new Error(`Failed reading SVD job state for ${rootId}: ${err?.message || err}`);
+    const rootId = existingJobId.slice("svd:".length);
+
+    try {
+      const job = await readSvdJob(rootId);
+
+      // FAILURE CHECK (Added to prevent infinite looping)
+      if (job?.status === "FAILED") {
+        throw new Error(`SVD Generation Failed: ${job.error || "Unknown RunPod Error"}`);
       }
-    }
 
-    const TOTAL_LOOPS = 3;
+      if (job?.status === "FINALIZING") {
+        return { state: "SVD_LOOPING", jobId: existingJobId };
+      }
 
-    if (
-      job?.status === "COMPLETE" &&
-      typeof job?.final_video_url === "string"
-    ) {
+      if (job?.status === "COMPLETE" && typeof job?.final_video_url === "string") {
+        return {
+          state: "COMPLETE",
+          jobId: existingJobId,
+          videoUrl: job.final_video_url
+        };
+      }
 
-      return {
-        state: "COMPLETE",
-        jobId: existingJobId,
-        videoUrl: job.final_video_url
-      };
-    }
-
+      // Default back to looping
       return { state: "SVD_LOOPING", jobId: existingJobId };
     } catch (err) {
       throw new Error(`Failed reading SVD job state for ${rootId}: ${err?.message || err}`);
