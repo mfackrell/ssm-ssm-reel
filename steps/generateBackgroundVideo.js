@@ -97,31 +97,39 @@ export async function generateBackgroundVideo(mood, existingJobId) {
     throw new Error(`Unexpected SDXL response: ${JSON.stringify(sdxl)}`);
   }
 
-  if (existingJobId.startsWith("sdxl:")) {
-    const sdxlJobId = existingJobId.slice("sdxl:".length);
-    const sdxl = await startOrPollSDXL(mood, sdxlJobId);
-
-    if (sdxl?.state === "PENDING" && typeof sdxl?.jobId === "string") {
-      return { state: "SDXL_PENDING", jobId: `sdxl:${sdxl.jobId}` };
-    }
-
-    if (sdxl?.state === "COMPLETE" && typeof sdxl?.imageUrl === "string") {
-      const rootId = await startSVD(sdxl.imageUrl);
-      return { state: "SVD_LOOPING", jobId: `svd:${rootId}` };
-    }
-
-    throw new Error(`Unexpected SDXL poll response: ${JSON.stringify(sdxl)}`);
-  }
-
   if (existingJobId.startsWith("svd:")) {
-    const rootId = existingJobId.slice("svd:".length);
-
-    try {
-      const job = await readSvdJob(rootId);
-
-    // HARD BLOCK: never allow COMPLETE until looping + stitching are truly finished
-    if (job?.status === "FINALIZING") {
-      return { state: "SVD_LOOPING", jobId: existingJobId };
+      const rootId = existingJobId.slice("svd:".length);
+  
+      try {
+        const job = await readSvdJob(rootId);
+  
+        // 1. Check for failure first to prevent the infinite loop
+        if (job?.status === "FAILED") {
+          throw new Error(`SVD Generation Failed: ${job.error || "Unknown RunPod Error"}`);
+        }
+  
+        // 2. Keep the finalizing check
+        if (job?.status === "FINALIZING") {
+          return { state: "SVD_LOOPING", jobId: existingJobId };
+        }
+  
+        // 3. Handle the successful completion
+        if (
+          job?.status === "COMPLETE" &&
+          typeof job?.final_video_url === "string"
+        ) {
+          return {
+            state: "COMPLETE",
+            jobId: existingJobId,
+            videoUrl: job.final_video_url
+          };
+        }
+  
+        // 4. Default back to looping if state is PENDING or LOOPING
+        return { state: "SVD_LOOPING", jobId: existingJobId };
+      } catch (err) {
+        throw new Error(`Failed reading SVD job state for ${rootId}: ${err?.message || err}`);
+      }
     }
 
     const TOTAL_LOOPS = 3;
